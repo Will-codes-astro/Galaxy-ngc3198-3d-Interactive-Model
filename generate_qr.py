@@ -11,7 +11,7 @@ from pathlib import Path
 BASE_DIR = Path(__file__).resolve().parent
 OUTPUT_PNG = BASE_DIR / "epq_qr_code.png"
 OUTPUT_SVG = BASE_DIR / "epq_qr_code.svg"
-TARGET_URL = "https://<YOUR-GITHUB-USERNAME>.github.io/<YOUR-REPO-NAME>/"
+TARGET_URL = "https://will-codes-astro.github.io/Galaxy-ngc3198-3d-Interactive-Model/"
 
 
 def load_qr_modules():
@@ -55,7 +55,7 @@ def main() -> None:
     print(f"QR target: {TARGET_URL}")
     print(f"Generated {OUTPUT_PNG.name} ({OUTPUT_PNG.stat().st_size:,} bytes)")
     print(f"Generated {OUTPUT_SVG.name} ({OUTPUT_SVG.stat().st_size:,} bytes)")
-    print("Edit TARGET_URL in generate_qr.py after publishing the dashboard.")
+    print("QR code ready for the configured GitHub Pages deployment.")
 
 
 if __name__ == "__main__":
