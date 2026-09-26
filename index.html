@@ -27,6 +27,7 @@
     h2 { margin:0; font-size:14px; font-weight:600; }
     .panel-heading span { color:var(--muted); font-size:11px; }
     .plot { width:100%; height:min(68vh,700px); min-height:420px; }
+    #orbitPlot { touch-action:none; }
     .timeline { display:grid; grid-template-columns:auto 1fr auto; gap:12px; align-items:center; padding:0 16px 14px; color:var(--muted); font-size:12px; }
     button { background:#102130; color:var(--ink); border:1px solid #294255; border-radius:4px; padding:7px 12px; cursor:pointer; }
     button:hover { border-color:var(--cyan); }
@@ -198,11 +199,13 @@
 
     const timeSlider=document.getElementById('timeSlider'),timeSliderBottom=document.getElementById('timeSliderBottom');
         const playButton=document.getElementById('playButton');let timer=null,playing=false;
-        let userCamera=null,cameraRevision=0,interactionUntil=0,pointerInteracting=false;
+        let userCamera=null,cameraRevision=0,interactionUntil=0,pointerInteracting=false,touchInteracting=false;
         orbitPlot.addEventListener('wheel',()=>{
             interactionUntil=performance.now()+350;
         },{capture:true,passive:true});
         orbitPlot.addEventListener('pointerdown',()=>{pointerInteracting=true;},true);
+        orbitPlot.addEventListener('touchstart',()=>{touchInteracting=true;},{capture:true,passive:true});
+        orbitPlot.addEventListener('touchmove',()=>{interactionUntil=performance.now()+350;},{capture:true,passive:true});
         window.addEventListener('pointerup',()=>{
             pointerInteracting=false;
             interactionUntil=performance.now()+250;
@@ -211,6 +214,14 @@
             pointerInteracting=false;
             interactionUntil=performance.now()+250;
         },true);
+        window.addEventListener('touchend',event=>{
+            touchInteracting=event.touches.length>0;
+            if(!touchInteracting)interactionUntil=performance.now()+350;
+        },{capture:true,passive:true});
+        window.addEventListener('touchcancel',event=>{
+            touchInteracting=event.touches.length>0;
+            if(!touchInteracting)interactionUntil=performance.now()+350;
+        },{capture:true,passive:true});
         orbitPlot.on('plotly_relayout',event=>{
             if(Object.keys(event).some(key=>key.startsWith('scene.camera'))){
                 userCamera=JSON.parse(JSON.stringify(orbitPlot.layout.scene.camera));
@@ -237,7 +248,7 @@
     timeSliderBottom.addEventListener('input',()=>setFrame(timeSliderBottom.value));
         async function advanceFrame(){
             if(!playing)return;
-            if(pointerInteracting||performance.now()<interactionUntil){
+            if(pointerInteracting||touchInteracting||performance.now()<interactionUntil){
                 timer=setTimeout(advanceFrame,50);
                 return;
             }
