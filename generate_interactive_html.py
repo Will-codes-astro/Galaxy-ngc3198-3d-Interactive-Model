@@ -181,6 +181,8 @@ HTML_TEMPLATE = r"""<!doctype html>
     .controls { display:grid; grid-template-columns:minmax(230px,1fr) minmax(230px,1fr) minmax(280px,1.4fr); gap:14px; padding:13px 16px; border:1px solid var(--line); background:var(--panel); border-radius:5px; margin-bottom:14px; }
     .control label { display:flex; justify-content:space-between; gap:12px; color:var(--muted); font-size:12px; margin-bottom:7px; }
     .control output { color:var(--ink); font-variant-numeric:tabular-nums; }
+    .control-help { color:var(--muted); font-size:11px; margin:6px 0 0; min-height:32px; }
+    .fit-button { margin-top:7px; font-size:11px; }
     input[type=range] { width:100%; accent-color:var(--cyan); }
     .panel-grid { display:grid; grid-template-columns:1.12fr 1fr; gap:14px; }
     .panel { min-width:0; background:var(--panel); border:1px solid var(--line); border-radius:5px; overflow:hidden; }
@@ -203,12 +205,12 @@ HTML_TEMPLATE = r"""<!doctype html>
   </header>
   <main>
     <section class="controls" aria-label="Dark matter controls">
-      <div class="control"><label for="massSlider"><span>Halo mass, M<sub>200</sub></span><output id="massValue"></output></label><input id="massSlider" type="range" min="0.10" max="2.00" step="0.01"></div>
-      <div class="control"><label for="scaleSlider"><span>Scale radius, r<sub>s</sub></span><output id="scaleValue"></output></label><input id="scaleSlider" type="range" min="5" max="60" step="0.5"></div>
+    <div class="control"><label for="massSlider"><span>Halo mass, M<sub>200</sub></span><output id="massValue"></output></label><input id="massSlider" type="range" min="0.00" max="2.00" step="0.01"><p class="control-help">Adds dark matter to the model. Set it to 0 for visible matter only.</p><button id="applyObservedFit" class="fit-button" type="button">Apply Observed Fit</button></div>
+    <div class="control"><label for="scaleSlider"><span>Scale radius, r<sub>s</sub></span><output id="scaleValue"></output></label><input id="scaleSlider" type="range" min="5" max="60" step="0.5"><p class="control-help">Controls halo concentration: a smaller radius packs more dark matter near the center.</p></div>
       <div class="control"><label for="timeSlider"><span>Orbit time</span><output id="timeValue"></output></label><div style="display:flex;align-items:center;gap:12px"><input id="timeSlider" type="range" min="0" max="__FRAME_MAX__" step="1" value="0"><button id="playButton" type="button">Play</button></div></div>
     </section>
     <section class="panel-grid">
-      <article class="panel"><div class="panel-heading"><h2>Stellar orbit trajectories</h2><span>3D · kpc · scroll to zoom, drag to rotate</span></div><div id="orbitPlot" class="plot" role="img" aria-label="Interactive three-dimensional NGC 3198 star trajectories"></div><div class="timeline"><span id="frameLabel">Frame 1</span><input id="timeSliderBottom" type="range" min="0" max="__FRAME_MAX__" step="1" value="0"><span id="timeLabel">0 Myr</span></div></article>
+    <article class="panel"><div class="panel-heading"><h2>Stellar orbit trajectories</h2><span>3D · kpc · drag to orbit · toolbar for Pan/Zoom · wheel to zoom</span></div><div id="orbitPlot" class="plot" role="img" aria-label="Interactive three-dimensional NGC 3198 star trajectories"></div><div class="timeline"><span id="frameLabel">Frame 1</span><input id="timeSliderBottom" type="range" min="0" max="__FRAME_MAX__" step="1" value="0"><span id="timeLabel">0 Myr</span></div></article>
       <article class="panel"><div class="panel-heading"><h2>Rotation curve</h2><span>SPARC data and NFW halo response</span></div><div id="curvePlot" class="plot" role="img" aria-label="NGC 3198 observed, baryonic, and fitted rotation curves"></div></article>
     </section>
     <footer><span>Baryons: V<sub>bar</sub>² = V<sub>gas</sub>² + 0.50V<sub>disk</sub>² + 0.70V<sub>bulge</sub>². Halo: NFW, M<sub>200</sub> and r<sub>s</sub> update locally.</span><span>SPARC values from the project’s local table2.dat.</span></footer>
@@ -226,6 +228,7 @@ HTML_TEMPLATE = r"""<!doctype html>
     const maxRadius = Math.max(...stars.map(s => s.initial_r_kpc));
     const speeds = stars.map(s => s.v_rot_kms);
     const minSpeed = Math.min(...speeds), speedSpan = Math.max(...speeds) - minSpeed || 1;
+    const ORBIT_PATH_STEP = 6;
     const palette = [[0,[35,145,255]],[0.5,[255,211,69]],[1,[255,69,58]]];
     function velocityColor(v, radius) {
       const t = Math.max(0,Math.min(1,(v-minSpeed)/speedSpan));
@@ -236,24 +239,31 @@ HTML_TEMPLATE = r"""<!doctype html>
       const rgb=a[1].map((c,i)=>Math.round((c+f*(b[1][i]-c))*(1-distanceLift)+255*distanceLift));
       return `rgb(${rgb[0]},${rgb[1]},${rgb[2]})`;
     }
-    function starTrace(frameIndex) {
-      return {
-        type:'scatter3d', mode:'markers', name:'Stars',
-        x:stars.map(s=>s.positions[frameIndex][0]), y:stars.map(s=>s.positions[frameIndex][1]), z:stars.map(s=>s.positions[frameIndex][2]),
+        function starCoordinates(frameIndex) {
+            return {
+                x:stars.map(s=>s.positions[frameIndex][0]),
+                y:stars.map(s=>s.positions[frameIndex][1]),
+                z:stars.map(s=>s.positions[frameIndex][2])
+            };
+        }
+        function starTrace(frameIndex) {
+            return {
+                type:'scatter3d', mode:'markers', name:'Stars',
+                ...starCoordinates(frameIndex),
         customdata:stars.map(s=>[s.id,s.v_rot_kms,s.initial_r_kpc]),
         marker:{size:stars.map(s=>4.8+1.2*s.initial_r_kpc/maxRadius),color:stars.map(s=>velocityColor(s.v_rot_kms,s.initial_r_kpc)),opacity:0.98,line:{width:0.5,color:'rgba(235,248,255,0.72)'}},
         hovertemplate:'Star %{customdata[0]}<br>R = %{customdata[2]:.1f} kpc<br>v = %{customdata[1]:.1f} km/s<extra></extra>'
       };
     }
     const orbitX=[],orbitY=[],orbitZ=[];
-    for(const s of stars){for(const p of s.positions){orbitX.push(p[0]);orbitY.push(p[1]);orbitZ.push(p[2]);}orbitX.push(null);orbitY.push(null);orbitZ.push(null);}
+    for(const s of stars){for(let i=0;i<s.positions.length;i+=ORBIT_PATH_STEP){const p=s.positions[i];orbitX.push(p[0]);orbitY.push(p[1]);orbitZ.push(p[2]);}orbitX.push(null);orbitY.push(null);orbitZ.push(null);}
     const orbitData=[
       {type:'scatter3d',mode:'lines',name:'Orbit paths',x:orbitX,y:orbitY,z:orbitZ,hoverinfo:'skip',line:{color:'rgba(110,145,178,0.16)',width:1}},
       starTrace(0),
       {type:'scatter3d',mode:'markers',name:'Galactic core',x:[0],y:[0],z:[0],hoverinfo:'skip',marker:{size:5,color:'#f0d69b',opacity:0.82}}
     ];
-    const orbitLayout={paper_bgcolor:BG,plot_bgcolor:BG,margin:{l:0,r:0,t:8,b:0},showlegend:false,scene:{bgcolor:BG,aspectmode:'cube',xaxis:{title:'x (kpc)',range:[-46,46],gridcolor:GRID,zerolinecolor:GRID,color:textColor},yaxis:{title:'y (kpc)',range:[-46,46],gridcolor:GRID,zerolinecolor:GRID,color:textColor},zaxis:{title:'z (kpc)',range:[-46,46],gridcolor:GRID,zerolinecolor:GRID,color:textColor},camera:{eye:{x:1.35,y:-1.45,z:1.05}}}};
-    Plotly.newPlot('orbitPlot',orbitData,orbitLayout,{responsive:true,displaylogo:false,scrollZoom:true});
+    const orbitLayout={paper_bgcolor:BG,plot_bgcolor:BG,margin:{l:0,r:0,t:8,b:0},showlegend:false,scene:{uirevision:'ngc3198-camera',dragmode:'orbit',bgcolor:BG,aspectmode:'cube',xaxis:{title:'x (kpc)',range:[-46,46],gridcolor:GRID,zerolinecolor:GRID,color:textColor},yaxis:{title:'y (kpc)',range:[-46,46],gridcolor:GRID,zerolinecolor:GRID,color:textColor},zaxis:{title:'z (kpc)',range:[-46,46],gridcolor:GRID,zerolinecolor:GRID,color:textColor},camera:{eye:{x:1.35,y:-1.45,z:1.05}}}};
+    Plotly.newPlot('orbitPlot',orbitData,orbitLayout,{responsive:true,displaylogo:false,displayModeBar:true,scrollZoom:true});
 
     const radii=DATA.rotation.map(p=>p.radius_kpc);
     const vBary=DATA.rotation.map(p=>p.baryonic_kms);
@@ -287,24 +297,36 @@ HTML_TEMPLATE = r"""<!doctype html>
       Plotly.restyle('curvePlot',{y:[halo,total]},[2,3]);
     }
     massSlider.addEventListener('input',updateHalo);scaleSlider.addEventListener('input',updateHalo);updateHalo();
+        document.getElementById('applyObservedFit').addEventListener('click',()=>{
+            massSlider.value=DEFAULTS.massT;
+            scaleSlider.value=DEFAULTS.scaleRadius;
+            updateHalo();
+        });
 
     const timeSlider=document.getElementById('timeSlider'),timeSliderBottom=document.getElementById('timeSliderBottom');
-    const playButton=document.getElementById('playButton');let timer=null;
+        const playButton=document.getElementById('playButton');let timer=null,playing=false;
     function setFrame(index){
       index=Math.max(0,Math.min(frameCount-1,Number(index)));
       timeSlider.value=index;timeSliderBottom.value=index;
-      const points=starTrace(index);
-      Plotly.restyle('orbitPlot',{x:[points.x],y:[points.y],z:[points.z],customdata:[points.customdata],'marker.color':[points.marker.color],'marker.size':[points.marker.size]},[1]);
+    const points=starCoordinates(index);
       document.getElementById('frameLabel').textContent=`Frame ${index+1}`;
       document.getElementById('timeValue').textContent=`${(index*DATA.frame_step_myr).toFixed(0)} Myr`;
       document.getElementById('timeLabel').textContent=`${(index*DATA.frame_step_myr).toFixed(0)} Myr`;
+            return Plotly.restyle('orbitPlot',{x:[points.x],y:[points.y],z:[points.z]},[1]);
     }
     timeSlider.addEventListener('input',()=>setFrame(timeSlider.value));
     timeSliderBottom.addEventListener('input',()=>setFrame(timeSliderBottom.value));
-    playButton.addEventListener('click',()=>{
-      if(timer){clearInterval(timer);timer=null;playButton.textContent='Play';return;}
-      if(Number(timeSlider.value)>=frameCount-1)setFrame(0);
-      playButton.textContent='Pause';timer=setInterval(()=>{const next=Number(timeSlider.value)+1;if(next>=frameCount){clearInterval(timer);timer=null;playButton.textContent='Play';return;}setFrame(next);},1000/24);
+        async function advanceFrame(){
+            if(!playing)return;
+            const next=Number(timeSlider.value)+1;
+            if(next>=frameCount){playing=false;timer=null;playButton.textContent='Play';return;}
+            await setFrame(next);
+            if(playing)timer=setTimeout(advanceFrame,100);
+        }
+        playButton.addEventListener('click',async()=>{
+            if(playing){playing=false;clearTimeout(timer);timer=null;playButton.textContent='Play';return;}
+            if(Number(timeSlider.value)>=frameCount-1)await setFrame(0);
+            playing=true;playButton.textContent='Pause';advanceFrame();
     });
     setFrame(0);
   </script>
