@@ -42,7 +42,7 @@
   </header>
   <main>
     <section class="controls" aria-label="Dark matter controls">
-    <div class="control"><label for="massSlider"><span>Halo mass, M<sub>200</sub></span><output id="massValue"></output></label><input id="massSlider" type="range" min="0.00" max="2.00" step="0.01"><p class="control-help">Adds dark matter to the model. Set it to 0 for visible matter only.</p><button id="applyObservedFit" class="fit-button" type="button">Apply Observed Fit</button></div>
+    <div class="control"><label for="massSlider"><span>Halo mass, M<sub>200</sub></span><output id="massValue"></output></label><input id="massSlider" type="range" min="0.00" max="2.00" step="0.01"><p class="control-help">Updates the rotation curve and star orbits. Set it to 0 for visible matter only.</p><button id="applyObservedFit" class="fit-button" type="button">Apply Observed Fit</button></div>
     <div class="control"><label for="scaleSlider"><span>Scale radius, r<sub>s</sub></span><output id="scaleValue"></output></label><input id="scaleSlider" type="range" min="5" max="60" step="0.5"><p class="control-help">Controls halo concentration: a smaller radius packs more dark matter near the center.</p></div>
       <div class="control"><label for="timeSlider"><span>Orbit time</span><output id="timeValue"></output></label><div style="display:flex;align-items:center;gap:12px"><input id="timeSlider" type="range" min="0" max="300" step="1" value="0"><button id="playButton" type="button">Play</button></div></div>
     </section>
@@ -65,7 +65,60 @@
     const maxRadius = Math.max(...stars.map(s => s.initial_r_kpc));
     const speeds = stars.map(s => s.v_rot_kms);
     const minSpeed = Math.min(...speeds), speedSpan = Math.max(...speeds) - minSpeed || 1;
-    const ORBIT_PATH_STEP = 6;
+        const ORBIT_PATH_STEP = 6;
+        const KM_S_TO_KPC_MYR = 0.0010227121650537077;
+        const radii=DATA.rotation.map(p=>p.radius_kpc);
+        const vBary=DATA.rotation.map(p=>p.baryonic_kms);
+        function nfwVelocityModel(massSolar,scaleRadius) {
+            if(massSolar<=0)return ()=>0;
+            const rhoCrit=3*H0*H0/(8*Math.PI*G);
+            const r200=Math.cbrt(3*massSolar/(4*Math.PI*200*rhoCrit));
+            const shape=x=>x<=0?0:Math.log1p(x)-x/(1+x);
+            const fc=Math.max(shape(r200/scaleRadius),1e-12);
+            return radius=>{
+                if(radius<=0)return 0;
+                const enclosed=radius>=r200?massSolar:massSolar*shape(radius/scaleRadius)/fc;
+                return Math.sqrt(G*enclosed/radius);
+            };
+        }
+        function haloCurve(massT,scaleRadius) {return radii.map(nfwVelocityModel(massT*1e12,scaleRadius));}
+        function baryonicVelocity(radius) {
+            if(radius<=radii[0])return vBary[0]*radius/radii[0];
+            const last=radii.length-1;
+            if(radius>=radii[last])return vBary[last]*Math.sqrt(radii[last]/radius);
+            let low=0,high=last;
+            while(high-low>1){const middle=Math.floor((low+high)/2);if(radii[middle]<=radius)low=middle;else high=middle;}
+            const fraction=(radius-radii[low])/(radii[high]-radii[low]);
+            return vBary[low]+fraction*(vBary[high]-vBary[low]);
+        }
+        function orbitDerivative(state,haloVelocity) {
+            const [x,y,vx,vy]=state;
+            const radius=Math.max(Math.hypot(x,y),1e-5);
+            const baryonic=baryonicVelocity(radius);
+            const halo=haloVelocity(radius);
+            const acceleration=(baryonic*baryonic+halo*halo)*KM_S_TO_KPC_MYR**2/radius;
+            return [vx,vy,-acceleration*x/radius,-acceleration*y/radius];
+        }
+        function integrateTrajectories(massT,scaleRadius) {
+            const haloVelocity=nfwVelocityModel(massT*1e12,scaleRadius),step=DATA.frame_step_myr;
+            return stars.map(star=>{
+                const [x,y]=star.positions[0],radius=Math.max(Math.hypot(x,y),1e-8);
+                const speed=star.v_rot_kms*KM_S_TO_KPC_MYR;
+                let state=[x,y,-speed*y/radius,speed*x/radius];
+                const positions=[[x,y,0]];
+                for(let frame=1;frame<frameCount;frame++){
+                      const k1=orbitDerivative(state,haloVelocity);
+                      const k2=orbitDerivative(state.map((value,index)=>value+step*k1[index]/2),haloVelocity);
+                      const k3=orbitDerivative(state.map((value,index)=>value+step*k2[index]/2),haloVelocity);
+                      const k4=orbitDerivative(state.map((value,index)=>value+step*k3[index]),haloVelocity);
+                    state=state.map((value,index)=>value+step*(k1[index]+2*k2[index]+2*k3[index]+k4[index])/6);
+                    positions.push([state[0],state[1],0]);
+                }
+                return positions;
+            });
+        }
+        let activeTrajectories=integrateTrajectories(DEFAULTS.massT,DEFAULTS.scaleRadius);
+        let currentFrame=0,orbitModelTimer=null;
     const palette = [[0,[35,145,255]],[0.5,[255,211,69]],[1,[255,69,58]]];
     function velocityColor(v, radius) {
       const t = Math.max(0,Math.min(1,(v-minSpeed)/speedSpan));
@@ -78,9 +131,9 @@
     }
         function starCoordinates(frameIndex) {
             return {
-                x:stars.map(s=>s.positions[frameIndex][0]),
-                y:stars.map(s=>s.positions[frameIndex][1]),
-                z:stars.map(s=>s.positions[frameIndex][2])
+                x:activeTrajectories.map(positions=>positions[frameIndex][0]),
+                y:activeTrajectories.map(positions=>positions[frameIndex][1]),
+                z:activeTrajectories.map(positions=>positions[frameIndex][2])
             };
         }
         function starTrace(frameIndex) {
@@ -92,27 +145,21 @@
         hovertemplate:'Star %{customdata[0]}<br>R = %{customdata[2]:.1f} kpc<br>v = %{customdata[1]:.1f} km/s<extra></extra>'
       };
     }
-    const orbitX=[],orbitY=[],orbitZ=[];
-    for(const s of stars){for(let i=0;i<s.positions.length;i+=ORBIT_PATH_STEP){const p=s.positions[i];orbitX.push(p[0]);orbitY.push(p[1]);orbitZ.push(p[2]);}orbitX.push(null);orbitY.push(null);orbitZ.push(null);}
+        function orbitPathCoordinates(){
+            const x=[],y=[],z=[];
+            for(const positions of activeTrajectories){for(let i=0;i<positions.length;i+=ORBIT_PATH_STEP){const p=positions[i];x.push(p[0]);y.push(p[1]);z.push(p[2]);}x.push(null);y.push(null);z.push(null);}
+            return{x,y,z};
+        }
+        const orbitPaths=orbitPathCoordinates();
+        const orbitPlot=document.getElementById('orbitPlot');
     const orbitData=[
-      {type:'scatter3d',mode:'lines',name:'Orbit paths',x:orbitX,y:orbitY,z:orbitZ,hoverinfo:'skip',line:{color:'rgba(110,145,178,0.16)',width:1}},
+    {type:'scatter3d',mode:'lines',name:'Orbit paths',x:orbitPaths.x,y:orbitPaths.y,z:orbitPaths.z,hoverinfo:'skip',line:{color:'rgba(110,145,178,0.16)',width:1}},
       starTrace(0),
       {type:'scatter3d',mode:'markers',name:'Galactic core',x:[0],y:[0],z:[0],hoverinfo:'skip',marker:{size:5,color:'#f0d69b',opacity:0.82}}
     ];
-    const orbitLayout={paper_bgcolor:BG,plot_bgcolor:BG,margin:{l:0,r:0,t:8,b:0},showlegend:false,scene:{uirevision:'ngc3198-camera',dragmode:'orbit',bgcolor:BG,aspectmode:'cube',xaxis:{title:'x (kpc)',range:[-46,46],gridcolor:GRID,zerolinecolor:GRID,color:textColor},yaxis:{title:'y (kpc)',range:[-46,46],gridcolor:GRID,zerolinecolor:GRID,color:textColor},zaxis:{title:'z (kpc)',range:[-46,46],gridcolor:GRID,zerolinecolor:GRID,color:textColor},camera:{eye:{x:1.35,y:-1.45,z:1.05}}}};
-    Plotly.newPlot('orbitPlot',orbitData,orbitLayout,{responsive:true,displaylogo:false,displayModeBar:true,scrollZoom:true});
+    const orbitLayout={paper_bgcolor:BG,plot_bgcolor:BG,margin:{l:0,r:0,t:8,b:0},showlegend:false,scene:{uirevision:'ngc3198-camera',dragmode:'orbit',bgcolor:BG,aspectmode:'cube',xaxis:{title:'x (kpc)',range:[-65,65],gridcolor:GRID,zerolinecolor:GRID,color:textColor},yaxis:{title:'y (kpc)',range:[-65,65],gridcolor:GRID,zerolinecolor:GRID,color:textColor},zaxis:{title:'z (kpc)',range:[-65,65],gridcolor:GRID,zerolinecolor:GRID,color:textColor},camera:{eye:{x:1.35,y:-1.45,z:1.05}}}};
+    const orbitPlotReady=Plotly.newPlot(orbitPlot,orbitData,orbitLayout,{responsive:true,displaylogo:false,displayModeBar:true,scrollZoom:true});
 
-    const radii=DATA.rotation.map(p=>p.radius_kpc);
-    const vBary=DATA.rotation.map(p=>p.baryonic_kms);
-    function nfwVelocity(radius,massSolar,scaleRadius) {
-      const rhoCrit=3*H0*H0/(8*Math.PI*G);
-      const r200=Math.cbrt(3*massSolar/(4*Math.PI*200*rhoCrit));
-      const shape=x=>x<=0?0:Math.log1p(x)-x/(1+x);
-      const fc=Math.max(shape(r200/scaleRadius),1e-12);
-      const enclosed=radius>=r200?massSolar:massSolar*shape(radius/scaleRadius)/fc;
-      return Math.sqrt(G*enclosed/radius);
-    }
-    function haloCurve(massT,scaleRadius) {return radii.map(r=>nfwVelocity(r,massT*1e12,scaleRadius));}
     const initialHalo=haloCurve(DEFAULTS.massT,DEFAULTS.scaleRadius);
     const totalCurve=vBary.map((v,i)=>Math.hypot(v,initialHalo[i]));
     const curveData=[
@@ -126,12 +173,21 @@
 
     const massSlider=document.getElementById('massSlider'),scaleSlider=document.getElementById('scaleSlider');
     massSlider.value=DEFAULTS.massT;scaleSlider.value=DEFAULTS.scaleRadius;
-    function updateHalo(){
+        function updateHalo(){
       const massT=Number(massSlider.value),rs=Number(scaleSlider.value),halo=haloCurve(massT,rs);
       const total=vBary.map((v,i)=>Math.hypot(v,halo[i]));
       document.getElementById('massValue').textContent=`${massT.toFixed(2)} × 10¹² M☉`;
       document.getElementById('scaleValue').textContent=`${rs.toFixed(1)} kpc`;
       Plotly.restyle('curvePlot',{y:[halo,total]},[2,3]);
+            clearTimeout(orbitModelTimer);
+            orbitModelTimer=setTimeout(()=>{
+                activeTrajectories=integrateTrajectories(massT,rs);
+                const paths=orbitPathCoordinates(),points=starCoordinates(currentFrame);
+                orbitPlotReady.then(()=>Promise.all([
+                    Plotly.restyle(orbitPlot,{x:[paths.x],y:[paths.y],z:[paths.z]},[0]),
+                    Plotly.restyle(orbitPlot,{x:[points.x],y:[points.y],z:[points.z]},[1])
+                ]));
+            },120);
     }
     massSlider.addEventListener('input',updateHalo);scaleSlider.addEventListener('input',updateHalo);updateHalo();
         document.getElementById('applyObservedFit').addEventListener('click',()=>{
@@ -142,23 +198,53 @@
 
     const timeSlider=document.getElementById('timeSlider'),timeSliderBottom=document.getElementById('timeSliderBottom');
         const playButton=document.getElementById('playButton');let timer=null,playing=false;
-    function setFrame(index){
+        let userCamera=null,cameraRevision=0,interactionUntil=0,pointerInteracting=false;
+        orbitPlot.addEventListener('wheel',()=>{
+            interactionUntil=performance.now()+350;
+        },{capture:true,passive:true});
+        orbitPlot.addEventListener('pointerdown',()=>{pointerInteracting=true;},true);
+        window.addEventListener('pointerup',()=>{
+            pointerInteracting=false;
+            interactionUntil=performance.now()+250;
+        },true);
+        window.addEventListener('pointercancel',()=>{
+            pointerInteracting=false;
+            interactionUntil=performance.now()+250;
+        },true);
+        orbitPlot.on('plotly_relayout',event=>{
+            if(Object.keys(event).some(key=>key.startsWith('scene.camera'))){
+                userCamera=JSON.parse(JSON.stringify(orbitPlot.layout.scene.camera));
+                cameraRevision++;
+            }
+        });
+        function setFrame(index){
       index=Math.max(0,Math.min(frameCount-1,Number(index)));
+            currentFrame=index;
       timeSlider.value=index;timeSliderBottom.value=index;
     const points=starCoordinates(index);
       document.getElementById('frameLabel').textContent=`Frame ${index+1}`;
       document.getElementById('timeValue').textContent=`${(index*DATA.frame_step_myr).toFixed(0)} Myr`;
       document.getElementById('timeLabel').textContent=`${(index*DATA.frame_step_myr).toFixed(0)} Myr`;
-            return Plotly.restyle('orbitPlot',{x:[points.x],y:[points.y],z:[points.z]},[1]);
+            const camera=JSON.parse(JSON.stringify(userCamera||orbitPlot.layout.scene.camera));
+            const revision=cameraRevision;
+            return Plotly.restyle(orbitPlot,{x:[points.x],y:[points.y],z:[points.z]},[1]).then(()=>{
+                if(revision===cameraRevision&&camera&&JSON.stringify(orbitPlot.layout.scene.camera)!==JSON.stringify(camera)){
+                    return Plotly.relayout(orbitPlot,{'scene.camera':camera});
+                }
+            });
     }
     timeSlider.addEventListener('input',()=>setFrame(timeSlider.value));
     timeSliderBottom.addEventListener('input',()=>setFrame(timeSliderBottom.value));
         async function advanceFrame(){
             if(!playing)return;
+            if(pointerInteracting||performance.now()<interactionUntil){
+                timer=setTimeout(advanceFrame,50);
+                return;
+            }
             const next=Number(timeSlider.value)+1;
             if(next>=frameCount){playing=false;timer=null;playButton.textContent='Play';return;}
             await setFrame(next);
-            if(playing)timer=setTimeout(advanceFrame,100);
+            if(playing)timer=setTimeout(advanceFrame,150);
         }
         playButton.addEventListener('click',async()=>{
             if(playing){playing=false;clearTimeout(timer);timer=null;playButton.textContent='Play';return;}
