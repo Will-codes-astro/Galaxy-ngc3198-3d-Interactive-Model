@@ -1,0 +1,6 @@
+astropy
+certifi
+matplotlib
+numpy
+pandas
+scipy

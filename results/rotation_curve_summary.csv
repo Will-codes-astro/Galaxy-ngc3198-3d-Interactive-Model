@@ -1,0 +1,2 @@
+Galaxy,Distance_Mpc,Data_Points,Ups_disk,Ups_bul,Degrees_of_Freedom,Reduced_Chi2,Max_Baryonic_Velocity_km_s,Max_Observed_Velocity_km_s,Outer_Radius_kpc,Outer_Observed_Velocity_km_s,Outer_Baryonic_Velocity_km_s,Outer_Velocity_Deficit_km_s,Plot_PNG,Plot_PDF
+NGC3198,13.80,43.00,0.50,0.70,43.00,759.05,101.32,157.00,44.08,149.00,64.71,84.29,plots\ngc3198_baryonic_baseline.png,plots\ngc3198_baryonic_baseline.pdf

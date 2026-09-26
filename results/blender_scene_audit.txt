@@ -1,0 +1,7 @@
+blend=C:\Users\willp\Downloads\EPQ rotation curves\NGC3198_Dark_Matter_Interactive.blend
+stars=200
+timeline=1:301
+scene_keys=['galaxy', 'model_note']
+ratio_property=False:None
+panel_registered=False
+frame_handler=False
